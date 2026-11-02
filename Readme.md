@@ -44,3 +44,57 @@ You are free to use any frameworks/NuGet packages that you see fit. You should p
 Feel free to use code comments to describe your changes. You are also welcome to update this readme with any important details for us to consider.
 
 Once you have completed the exercise either ensure your repository is available publicly or contact the hiring manager to set up a private share.
+
+---
+
+# Solution Notes
+
+## How to run
+
+```bash
+dotnet build          # builds the solution
+dotnet test           # runs the unit tests (16 tests)
+
+# Run the console app with command-line arguments: rebateId productId volume
+dotnet run --project Smartwyre.DeveloperTest.Runner -- reb-1 prod-1 5
+
+# Or run with no arguments and it will prompt for each value
+dotnet run --project Smartwyre.DeveloperTest.Runner
+```
+
+> Note: the data stores are stubs (their DB code was removed "for brevity"), so they return
+> empty `Rebate`/`Product` objects. With default data the calculation reports that it could
+> not be calculated, which is the correct behaviour. The unit tests supply real data via mocks.
+
+## What I changed
+
+The starting point was a single `Calculate` method built around one big `switch`. It was hard
+to test (it `new`ed its own data stores) and every new incentive type meant editing that switch.
+With the brief saying "many more incentive types" are coming, that was the main thing to fix.
+
+**Dependencies are injected now.** `RebateService` takes `IRebateDataStore` and
+`IProductDataStore` through its constructor instead of newing them up, so the tests can hand it
+mocks and it never touches a real database.
+
+**Each incentive type is its own calculator.** I pulled the per-type rules out of the switch into
+an `IIncentiveCalculator` with one implementation per type (`FixedCashAmountCalculator`,
+`FixedRateRebateCalculator`, `AmountPerUomCalculator`, under `Services/Incentives`). Each one
+decides whether it applies (`CanCalculate`) and how much to pay (`Calculate`). `RebateService`
+just looks up the rebate and product, picks the matching calculator by `IncentiveType` and
+delegates.
+
+Adding a new incentive type is then: add the enum value, write a new calculator, register it in
+`Program.cs`. Nothing existing has to change.
+
+**A few bugs came out in the wash:**
+- The old null checks sat *after* `switch (rebate.Incentive)`, which had already dereferenced
+  `rebate` — so they never actually ran. The null check happens up front now.
+- `FixedCashAmount` never null-checked the product while the other two did. It's consistent now.
+- `CalculateRebateResult` carries the calculated `Amount` so the caller can see the value, not
+  just success/fail.
+
+## Tests
+
+`IncentiveCalculatorTests` covers each calculator on its own — the formulas and the
+zero/unsupported edge cases. `RebateServiceTests` covers the orchestration with mocked stores,
+including that the result is stored only on success. Mocking is done with Moq.
